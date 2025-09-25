@@ -5,6 +5,7 @@
 # Usage: ./setup-dokku-server.sh <letsencrypt-email>
 
 set -e  # Exit on any error
+set +x  # Disable command echoing when script is pasted
 
 # Get Let's Encrypt email from command line argument
 LETSENCRYPT_EMAIL="${1:-admin@example.com}"
@@ -334,12 +335,26 @@ fi
 echo -e "${BLUE}Configuring global domain for multiple applications...${NC}"
 SERVER_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || hostname -I | awk '{print $1}')
 if [ -n "$SERVER_IP" ]; then
-    dokku domains:set-global ${SERVER_IP}.sslip.io
-    echo -e "${GREEN}Global domain set to: ${SERVER_IP}.sslip.io${NC}"
-    echo -e "${CYAN}This allows multiple apps to run as subdomains (e.g., app1.${SERVER_IP}.sslip.io, app2.${SERVER_IP}.sslip.io)${NC}"
+    # Check if the IP is IPv6 (contains colons) and format for sslip.io
+    if [[ "$SERVER_IP" == *":"* ]]; then
+        # IPv6 address: replace colons with dashes for sslip.io compatibility
+        FORMATTED_IP=$(echo "$SERVER_IP" | sed 's/:/-/g')
+        echo -e "${YELLOW}Detected IPv6 address: $SERVER_IP${NC}"
+        echo -e "${BLUE}Formatting for sslip.io: $FORMATTED_IP${NC}"
+        SSLIP_DOMAIN="${FORMATTED_IP}.sslip.io"
+    else
+        # IPv4 address: use as-is
+        echo -e "${YELLOW}Detected IPv4 address: $SERVER_IP${NC}"
+        SSLIP_DOMAIN="${SERVER_IP}.sslip.io"
+    fi
+
+    dokku domains:set-global "$SSLIP_DOMAIN"
+    echo -e "${GREEN}Global domain set to: $SSLIP_DOMAIN${NC}"
+    echo -e "${CYAN}This allows multiple apps to run as subdomains (e.g., app1.$SSLIP_DOMAIN, app2.$SSLIP_DOMAIN)${NC}"
 else
     echo -e "${YELLOW}Could not detect server IP automatically.${NC}"
-    echo -e "${YELLOW}Please run manually: dokku domains:set-global <server-ip>.sslip.io${NC}"
+    echo -e "${YELLOW}Please run manually: dokku domains:set-global <formatted-ip>.sslip.io${NC}"
+    echo -e "${YELLOW}For IPv6, replace colons with dashes (e.g., 2a01-4f8-c013-ae--1.sslip.io)${NC}"
 fi
 
 echo -e "${GREEN}Dokku server setup completed successfully!${NC}"
@@ -347,7 +362,11 @@ echo ""
 echo -e "${PURPLE}Next steps after reboot:${NC}"
 echo -e "${CYAN}1. Access your server's IP address in a web browser to complete Dokku setup${NC}"
 echo -e "${CYAN}2. Deploy your applications using 'git push dokku main'${NC}"
-echo -e "${CYAN}3. Each app will be accessible at <app-name>.${SERVER_IP}.sslip.io${NC}"
+if [ -n "$SSLIP_DOMAIN" ]; then
+    echo -e "${CYAN}3. Each app will be accessible at <app-name>.$SSLIP_DOMAIN${NC}"
+else
+    echo -e "${CYAN}3. Each app will be accessible at <app-name>.<formatted-ip>.sslip.io${NC}"
+fi
 echo -e "${CYAN}4. Configure custom domains and SSL certificates if needed${NC}"
 echo -e "${CYAN}5. Configure file upload limits for apps: dokku-setup-upload-limits <app-name> <size>${NC}"
 echo ""
