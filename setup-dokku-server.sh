@@ -145,6 +145,22 @@ echo -e "${GREEN}Firewall is now configured for Dokku + Rails applications${NC}"
 echo -e "${CYAN}Allowed services: SSH (22), HTTP (80), HTTPS (443)${NC}"
 echo -e "${CYAN}All other incoming traffic is blocked by default${NC}"
 
+# Prepare SSH keys for Dokku installation
+echo -e "${BLUE}Preparing SSH keys for Dokku installation...${NC}"
+if [ -f ~/.ssh/authorized_keys ]; then
+    # Extract the first public key and save it as id_rsa.pub for Dokku
+    if [ ! -f ~/.ssh/id_rsa.pub ]; then
+        echo -e "${BLUE}Creating id_rsa.pub from authorized_keys for Dokku compatibility...${NC}"
+        head -n 1 ~/.ssh/authorized_keys > ~/.ssh/id_rsa.pub
+        chmod 644 ~/.ssh/id_rsa.pub
+        echo -e "${GREEN}Created ~/.ssh/id_rsa.pub from first authorized key${NC}"
+    else
+        echo -e "${GREEN}SSH key file ~/.ssh/id_rsa.pub already exists${NC}"
+    fi
+else
+    echo -e "${YELLOW}Warning: ~/.ssh/authorized_keys not found. SSH key setup will be manual.${NC}"
+fi
+
 # Change to /tmp directory
 echo -e "${BLUE}Changing to /tmp directory...${NC}"
 cd /tmp
@@ -321,20 +337,12 @@ echo -e "${CYAN}  dokku nginx:set myapp client-max-body-size 50m${NC}"
 echo -e "${CYAN}  dokku proxy:build-config myapp${NC}"
 echo ""
 
-# Add SSH keys for admin user
-echo -e "${BLUE}Adding SSH keys for admin user...${NC}"
+# Add SSH keys to Dokku for deployment access
+echo -e "${BLUE}Adding SSH keys to Dokku for deployment access...${NC}"
 if [ -f ~/.ssh/authorized_keys ]; then
-    # Extract the first public key and save it as id_rsa.pub for Dokku
-    if [ ! -f ~/.ssh/id_rsa.pub ]; then
-        echo -e "${BLUE}Creating id_rsa.pub from authorized_keys for Dokku compatibility...${NC}"
-        head -n 1 ~/.ssh/authorized_keys > ~/.ssh/id_rsa.pub
-        chmod 644 ~/.ssh/id_rsa.pub
-        echo -e "${GREEN}Created ~/.ssh/id_rsa.pub from first authorized key${NC}"
-    fi
-
-    # Add keys to Dokku
     cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin
     echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
+    echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
 else
     echo -e "${YELLOW}Warning: ~/.ssh/authorized_keys not found. You'll need to add SSH keys manually later.${NC}"
     echo -e "${YELLOW}Use: cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin${NC}"

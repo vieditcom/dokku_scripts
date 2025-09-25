@@ -40,6 +40,26 @@ A collection of bash scripts to automate Dokku server setup and Rails applicatio
 - Root access or sudo privileges
 - Domain name (optional, scripts use sslip.io for automatic domains)
 - AWS account for database backups (for app setup)
+- SSH access to the server
+
+## Getting Started
+
+### Step 0: Copy Scripts to Server
+
+First, copy the scripts to your new server. Choose one of these methods:
+
+#### SCP Copy
+```bash
+# From your local machine, copy scripts to server
+scp setup-dokku-server.sh root@your-server-ip:/tmp/
+scp setup-dokku-app.sh root@your-server-ip:/tmp/
+scp dokku-configure-upload-limits.sh root@your-server-ip:/tmp/
+
+# SSH into server and make executable
+ssh root@your-server-ip
+cd /tmp
+chmod +x *.sh
+```
 
 ## Usage
 
@@ -187,6 +207,26 @@ After deployment, your applications will be accessible at:
 - **Retention**: Configured by Dokku postgres plugin settings
 
 ## Troubleshooting
+
+### IPv6 Server Support
+The scripts automatically detect and handle IPv6 servers (like ARM servers on Hetzner):
+- IPv6 addresses are automatically formatted for sslip.io compatibility
+- Example: `2a01:4f8:c013:ae::1` becomes `2a01-4f8-c013-ae--1.sslip.io`
+- No manual configuration needed
+
+### Common Setup Issues
+
+#### AUFS Module Warning
+```
+modprobe: FATAL: Module aufs not found
+```
+**Solution**: This is harmless. Modern Docker uses `overlay2` storage driver instead.
+
+#### Kernel Version Notice
+```
+Running kernel version is not the expected kernel version
+```
+**Solution**: This is normal after system updates. The server reboot at the end of setup will load the new kernel.
 
 ### Check Application Status
 ```bash
