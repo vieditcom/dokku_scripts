@@ -324,8 +324,17 @@ echo ""
 # Add SSH keys for admin user
 echo -e "${BLUE}Adding SSH keys for admin user...${NC}"
 if [ -f ~/.ssh/authorized_keys ]; then
+    # Extract the first public key and save it as id_rsa.pub for Dokku
+    if [ ! -f ~/.ssh/id_rsa.pub ]; then
+        echo -e "${BLUE}Creating id_rsa.pub from authorized_keys for Dokku compatibility...${NC}"
+        head -n 1 ~/.ssh/authorized_keys > ~/.ssh/id_rsa.pub
+        chmod 644 ~/.ssh/id_rsa.pub
+        echo -e "${GREEN}Created ~/.ssh/id_rsa.pub from first authorized key${NC}"
+    fi
+
+    # Add keys to Dokku
     cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin
-    echo -e "${GREEN}SSH keys added successfully!${NC}"
+    echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
 else
     echo -e "${YELLOW}Warning: ~/.ssh/authorized_keys not found. You'll need to add SSH keys manually later.${NC}"
     echo -e "${YELLOW}Use: cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin${NC}"
