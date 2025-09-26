@@ -55,7 +55,7 @@ check_required_plugins() {
     local missing_plugins=()
     
     for plugin in "${required_plugins[@]}"; do
-        if ! dokku plugin:list | grep -q "^\s*$plugin\s"; then
+        if ! dokku plugin:list 2>/dev/null | grep -q "$plugin"; then
             print_error "Plugin '$plugin' is not installed"
             missing_plugins+=("$plugin")
         else
