@@ -337,12 +337,20 @@ echo -e "${CYAN}  dokku nginx:set myapp client-max-body-size 50m${NC}"
 echo -e "${CYAN}  dokku proxy:build-config myapp${NC}"
 echo ""
 
-# Add SSH keys to Dokku for deployment access
-echo -e "${BLUE}Adding SSH keys to Dokku for deployment access...${NC}"
+# Verify SSH keys are configured for deployment access
+echo -e "${BLUE}Verifying SSH keys for deployment access...${NC}"
 if [ -f ~/.ssh/authorized_keys ]; then
-    cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin
-    echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
-    echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+    # Check if admin key already exists (Dokku auto-imports during installation)
+    if dokku ssh-keys:list | grep -q "admin"; then
+        echo -e "${GREEN}SSH keys already configured in Dokku for deployment!${NC}"
+        echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+    else
+        # Add keys if not already present
+        echo -e "${BLUE}Adding SSH keys to Dokku...${NC}"
+        cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin
+        echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
+        echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+    fi
 else
     echo -e "${YELLOW}Warning: ~/.ssh/authorized_keys not found. You'll need to add SSH keys manually later.${NC}"
     echo -e "${YELLOW}Use: cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin${NC}"
