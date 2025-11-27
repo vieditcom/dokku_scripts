@@ -213,12 +213,55 @@ configure_rails_env() {
     print_success "Rails environment configured"
 }
 
+# Function to configure app domain
+configure_app_domain() {
+    local app_name=$1
+
+    print_status "Configuring application domain..."
+
+    # Get the global domain to construct app-specific subdomain
+    GLOBAL_DOMAIN=$(dokku domains:report --global | grep "Global vhosts" | awk '{print $3}')
+
+    if [ -n "$GLOBAL_DOMAIN" ]; then
+        APP_DOMAIN="${app_name}.${GLOBAL_DOMAIN}"
+        print_status "Setting domain to: $APP_DOMAIN"
+        dokku domains:set "$app_name" "$APP_DOMAIN"
+        print_success "Application domain configured: $APP_DOMAIN"
+    else
+        print_warning "Global domain not configured, skipping app domain setup"
+        print_warning "App will use default Dokku domain configuration"
+    fi
+}
+
+# Function to enable Let's Encrypt SSL
+enable_letsencrypt() {
+    local app_name=$1
+
+    print_status "Enabling Let's Encrypt SSL certificate..."
+
+    # Check if the app has been deployed
+    if ! dokku apps:report "$app_name" | grep -q "deployed: true"; then
+        print_warning "App not yet deployed, SSL will need to be enabled after first deployment"
+        print_warning "Run: dokku letsencrypt:enable $app_name"
+        return
+    fi
+
+    # Enable Let's Encrypt (global email is already configured)
+    if dokku letsencrypt:enable "$app_name" 2>&1; then
+        print_success "Let's Encrypt SSL certificate enabled"
+    else
+        print_warning "Could not enable Let's Encrypt automatically"
+        print_warning "This is normal if the app isn't deployed yet"
+        print_warning "After deploying, run: dokku letsencrypt:enable $app_name"
+    fi
+}
+
 # Function to scale application processes
 scale_processes() {
     local app_name=$1
-    
+
     print_status "Scaling application processes..."
-    
+
     dokku ps:scale "$app_name" web=1 worker=1
     print_success "Application processes scaled (web=1, worker=1)"
 }
@@ -226,16 +269,32 @@ scale_processes() {
 # Function to display setup summary
 display_summary() {
     local app_name=$1
-    
+
+    # Get the configured domain
+    GLOBAL_DOMAIN=$(dokku domains:report --global | grep "Global vhosts" | awk '{print $3}')
+    if [ -n "$GLOBAL_DOMAIN" ]; then
+        APP_DOMAIN="${app_name}.${GLOBAL_DOMAIN}"
+    else
+        APP_DOMAIN="(default Dokku domain)"
+    fi
+
     echo
     print_success "=== SETUP COMPLETE ==="
     echo -e "${GREEN}Application:${NC} $app_name"
+    echo -e "${GREEN}Domain:${NC} $APP_DOMAIN"
     echo -e "${GREEN}Database:${NC} ${app_name}db (PostgreSQL)"
     echo -e "${GREEN}Cache:${NC} ${app_name}red (Redis)"
     echo -e "${GREEN}Environment:${NC} Production"
     echo -e "${GREEN}Backup Bucket:${NC} $BACKUP_BUCKET"
     echo -e "${GREEN}Backup Schedule:${NC} AWS authenticated & scheduled (Sun/Thu at midnight)"
     echo -e "${GREEN}Scaling:${NC} web=1, worker=1"
+    echo
+    echo -e "${YELLOW}Next steps:${NC}"
+    echo -e "${CYAN}1. Deploy your application: git push dokku main${NC}"
+    echo -e "${CYAN}2. After deployment, enable SSL: dokku letsencrypt:enable $app_name${NC}"
+    if [ -n "$GLOBAL_DOMAIN" ]; then
+        echo -e "${CYAN}3. Your app will be available at: https://$APP_DOMAIN${NC}"
+    fi
     echo
 }
 
@@ -273,10 +332,16 @@ main() {
     
     # Configure Rails environment
     configure_rails_env "$app_name"
-    
+
+    # Configure app domain
+    configure_app_domain "$app_name"
+
     # Scale processes
     scale_processes "$app_name"
-    
+
+    # Enable Let's Encrypt SSL (will warn if app not deployed yet)
+    enable_letsencrypt "$app_name"
+
     # Display summary
     display_summary "$app_name"
 }
