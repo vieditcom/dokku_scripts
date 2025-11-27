@@ -46,6 +46,107 @@ export LANGUAGE=en_US:en
 
 echo -e "${GREEN}Locale configuration completed!${NC}"
 
+# Harden SSH configuration
+echo -e "${PURPLE}Hardening SSH configuration for security...${NC}"
+
+# IMPORTANT: Verify SSH keys exist before hardening
+if [ ! -f ~/.ssh/authorized_keys ] || [ ! -s ~/.ssh/authorized_keys ]; then
+    echo -e "${RED}ERROR: No SSH keys found in ~/.ssh/authorized_keys${NC}"
+    echo -e "${RED}SSH hardening SKIPPED to prevent lockout${NC}"
+    echo -e "${YELLOW}Please add SSH keys manually, then run SSH hardening separately${NC}"
+    echo -e "${YELLOW}Command: cat your-public-key.pub >> ~/.ssh/authorized_keys${NC}"
+    SSH_HARDENING_SKIPPED=true
+else
+    echo -e "${GREEN}SSH keys found in ~/.ssh/authorized_keys - proceeding with hardening${NC}"
+    SSH_HARDENING_SKIPPED=false
+fi
+
+if [ "$SSH_HARDENING_SKIPPED" = false ]; then
+    # Backup original SSH config
+    if [ ! -f /etc/ssh/sshd_config.backup ]; then
+        cp /etc/ssh/sshd_config /etc/ssh/sshd_config.backup
+        echo -e "${BLUE}Backed up original SSH config${NC}"
+    fi
+
+    # Apply SSH hardening settings
+    cat > /etc/ssh/sshd_config.d/99-hardening.conf << 'EOF'
+# SSH Hardening Configuration
+
+# Disable password authentication (key-only auth)
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+
+# Disable root login via SSH (use sudo instead)
+PermitRootLogin prohibit-password
+
+# Disable empty passwords
+PermitEmptyPasswords no
+
+# Use only strong key exchange algorithms
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256
+
+# Use only strong ciphers
+Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
+
+# Use only strong MAC algorithms
+MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
+
+# Disable X11 forwarding
+X11Forwarding no
+
+# Limit authentication attempts
+MaxAuthTries 3
+
+# Set login grace time (30 seconds)
+LoginGraceTime 30
+
+# Set client alive interval (5 minutes) to disconnect idle sessions
+ClientAliveInterval 300
+ClientAliveCountMax 2
+
+# Disable TCP forwarding unless needed
+AllowTcpForwarding no
+
+# Disable agent forwarding
+AllowAgentForwarding no
+EOF
+
+    echo -e "${GREEN}SSH hardening configuration applied${NC}"
+    echo -e "${CYAN}Password authentication disabled - key-based auth only${NC}"
+    echo -e "${CYAN}Root login via password disabled${NC}"
+
+    # Test SSH config and restart if valid
+    if sshd -t 2>/dev/null; then
+        systemctl restart sshd
+        echo -e "${GREEN}SSH service restarted with hardened configuration${NC}"
+
+        # Display warning to keep current session open
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${RED}⚠️  IMPORTANT: DO NOT CLOSE THIS SSH SESSION YET! ⚠️${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}SSH hardening has been applied. Test your connection first:${NC}"
+        echo -e "${CYAN}1. Open a NEW terminal window${NC}"
+        echo -e "${CYAN}2. Try to SSH: ssh root@your-server-ip${NC}"
+        echo -e "${CYAN}3. If it works, you're safe to close this session${NC}"
+        echo -e "${CYAN}4. If it fails, use this session to revert:${NC}"
+        echo -e "${CYAN}   sudo rm /etc/ssh/sshd_config.d/99-hardening.conf${NC}"
+        echo -e "${CYAN}   sudo systemctl restart sshd${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+        # Wait for user confirmation
+        echo -e "${BLUE}Press ENTER after you have verified SSH access works in a new terminal...${NC}"
+        read -r
+    else
+        echo -e "${YELLOW}Warning: SSH config test failed, keeping old configuration${NC}"
+        rm -f /etc/ssh/sshd_config.d/99-hardening.conf
+    fi
+else
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${RED}SSH hardening was SKIPPED due to missing SSH keys${NC}"
+    echo -e "${YELLOW}Your server is currently LESS SECURE${NC}"
+    echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+fi
+
 # Update package list and upgrade system
 echo -e "${BLUE}Updating package list and upgrading system...${NC}"
 
@@ -66,6 +167,28 @@ apt upgrade -y
 rm -f /etc/apt/apt.conf.d/50unattended-upgrades-local
 
 echo -e "${GREEN}System update completed successfully!${NC}"
+
+# Configure Docker DNS for container connectivity
+echo -e "${PURPLE}Configuring Docker DNS for reliable container connectivity...${NC}"
+
+# Create Docker daemon configuration directory if it doesn't exist
+if [ ! -d /etc/docker ]; then
+    mkdir -p /etc/docker
+    echo -e "${BLUE}Created /etc/docker directory${NC}"
+fi
+
+# Configure Docker to use reliable external DNS servers
+# This prevents DNS resolution issues in containers
+cat > /etc/docker/daemon.json << 'EOF'
+{
+    "dns": ["8.8.8.8", "1.1.1.1"]
+}
+EOF
+
+echo -e "${GREEN}Docker DNS configuration created at /etc/docker/daemon.json${NC}"
+echo -e "${CYAN}Containers will use Google DNS (8.8.8.8) and Cloudflare DNS (1.1.1.1)${NC}"
+
+# Note: Docker will be restarted after Dokku installation to apply these settings
 
 # Configure firewall for Dokku + Rails applications
 echo -e "${PURPLE}Configuring firewall for Dokku applications...${NC}"
@@ -88,12 +211,17 @@ echo -e "${BLUE}Setting default firewall policies...${NC}"
 ufw default deny incoming
 ufw default allow outgoing
 
-# Allow essential services for Dokku + Rails
-echo -e "${BLUE}Configuring firewall rules for Dokku applications...${NC}"
+# Enable forwarding for Docker containers
+echo -e "${BLUE}Enabling packet forwarding for Docker containers...${NC}"
+sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+echo -e "${GREEN}UFW forward policy set to ACCEPT${NC}"
 
-# SSH access (essential for server management)
-ufw allow 22/tcp comment 'SSH access'
-echo -e "${CYAN}✓ SSH (port 22) - Server management${NC}"
+# Allow essential services for Dokku + Rails with rate limiting
+echo -e "${BLUE}Configuring firewall rules with rate limiting for Dokku applications...${NC}"
+
+# SSH access with rate limiting (max 6 connections per 30 seconds per IP)
+ufw limit 22/tcp comment 'SSH access with rate limiting'
+echo -e "${CYAN}✓ SSH (port 22) - Server management (rate limited: 6 conn/30s)${NC}"
 
 # HTTP traffic (will redirect to HTTPS via Dokku)
 ufw allow 80/tcp comment 'HTTP web traffic'
@@ -109,24 +237,42 @@ echo -e "${BLUE}Configuring UFW to work with Docker containers...${NC}"
 # Ensure UFW handles IPv6 properly
 sed -i 's/IPV6=no/IPV6=yes/' /etc/default/ufw 2>/dev/null || echo "IPV6=yes" >> /etc/default/ufw
 
-# Configure UFW to work with Docker
+# Configure UFW to work with Docker (Security Hardened)
 cat > /etc/ufw/after.rules << 'EOF'
-# Put Docker behind UFW
+# Put Docker behind UFW with security controls
 *filter
 :DOCKER-USER - [0:0]
 :ufw-user-input - [0:0]
 
-# Allow established connections
+# Allow established/related connections (replies to container requests)
 -A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
-# Drop invalid packets
+# Drop invalid packets early
 -A DOCKER-USER -m conntrack --ctstate INVALID -j DROP
 
-# Allow incoming traffic on the default interface
+# Allow DNS queries (UDP and TCP port 53) - Required for container connectivity
+-A DOCKER-USER -p udp --dport 53 -j ACCEPT
+-A DOCKER-USER -p tcp --dport 53 -j ACCEPT
+
+# Allow HTTP/HTTPS outbound (for package downloads, git clone, etc.)
+-A DOCKER-USER -p tcp --dport 80 -j ACCEPT
+-A DOCKER-USER -p tcp --dport 443 -j ACCEPT
+
+# Allow Git protocol (port 9418) - Used by some git operations
+-A DOCKER-USER -p tcp --dport 9418 -j ACCEPT
+
+# Allow NTP for time synchronization
+-A DOCKER-USER -p udp --dport 123 -j ACCEPT
+
+# Allow incoming traffic on common network interfaces (for published ports)
 -A DOCKER-USER -i eth0 -j ufw-user-input
 -A DOCKER-USER -i enp1s0 -j ufw-user-input
+-A DOCKER-USER -i ens3 -j ufw-user-input
 
-# Drop all other traffic to Docker containers
+# Log dropped outbound connections from containers (for security monitoring)
+-A DOCKER-USER -m limit --limit 3/min -j LOG --log-prefix "[UFW DOCKER BLOCK] "
+
+# Drop all other outbound traffic from containers
 -A DOCKER-USER -j DROP
 
 COMMIT
@@ -144,6 +290,85 @@ ufw status verbose
 echo -e "${GREEN}Firewall is now configured for Dokku + Rails applications${NC}"
 echo -e "${CYAN}Allowed services: SSH (22), HTTP (80), HTTPS (443)${NC}"
 echo -e "${CYAN}All other incoming traffic is blocked by default${NC}"
+
+# Install and configure fail2ban for intrusion prevention
+echo -e "${PURPLE}Installing fail2ban for intrusion prevention...${NC}"
+apt install -y fail2ban
+
+# Create fail2ban local configuration
+cat > /etc/fail2ban/jail.local << 'EOF'
+[DEFAULT]
+# Ban hosts for 1 hour (3600 seconds)
+bantime = 3600
+
+# A host is banned if it has generated "maxretry" during the last "findtime"
+findtime = 600
+
+# Number of failures before a host gets banned
+maxretry = 5
+
+# Email notifications (disabled by default, configure if needed)
+destemail = root@localhost
+sendername = Fail2Ban
+action = %(action_)s
+
+[sshd]
+enabled = true
+port = 22
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 3600
+
+[dokku]
+enabled = true
+port = 22
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 3
+bantime = 3600
+EOF
+
+# Restart fail2ban to apply configuration
+systemctl enable fail2ban
+systemctl restart fail2ban
+
+echo -e "${GREEN}fail2ban installed and configured!${NC}"
+echo -e "${CYAN}SSH bruteforce protection enabled (3 failed attempts = 1 hour ban)${NC}"
+
+# Install unattended-upgrades for automatic security updates
+echo -e "${PURPLE}Installing automatic security updates...${NC}"
+apt install -y unattended-upgrades
+
+# Configure unattended-upgrades
+cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+
+Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+Unattended-Upgrade::MinimalSteps "true";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-Unused-Dependencies "true";
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Automatic-Reboot-Time "03:00";
+EOF
+
+# Enable automatic updates
+cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Download-Upgradeable-Packages "1";
+APT::Periodic::AutocleanInterval "7";
+APT::Periodic::Unattended-Upgrade "1";
+EOF
+
+systemctl enable unattended-upgrades
+systemctl restart unattended-upgrades
+
+echo -e "${GREEN}Automatic security updates enabled!${NC}"
+echo -e "${CYAN}Security patches will be applied automatically${NC}"
 
 # Prepare SSH keys for Dokku installation
 echo -e "${BLUE}Preparing SSH keys for Dokku installation...${NC}"
@@ -182,6 +407,25 @@ chmod +x bootstrap.sh
 DOKKU_TAG=$LATEST_VERSION bash bootstrap.sh
 
 echo -e "${GREEN}Dokku installation completed!${NC}"
+
+# Restart Docker to apply DNS configuration
+echo -e "${BLUE}Restarting Docker to apply DNS configuration...${NC}"
+if systemctl restart docker 2>/dev/null; then
+    echo -e "${GREEN}Docker restarted successfully${NC}"
+    sleep 3  # Wait for Docker to fully restart
+else
+    echo -e "${YELLOW}Warning: Could not restart Docker automatically${NC}"
+    echo -e "${YELLOW}Please run 'systemctl restart docker' manually after setup${NC}"
+fi
+
+# Verify Docker DNS configuration
+echo -e "${BLUE}Verifying Docker DNS configuration...${NC}"
+if docker run --rm alpine nslookup github.com > /dev/null 2>&1; then
+    echo -e "${GREEN}✓ Docker containers can resolve DNS successfully${NC}"
+else
+    echo -e "${YELLOW}⚠ Warning: Docker DNS verification failed${NC}"
+    echo -e "${YELLOW}This may be resolved after the server reboot${NC}"
+fi
 
 # Install essential Dokku plugins
 echo -e "${PURPLE}Installing essential Dokku plugins...${NC}"

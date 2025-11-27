@@ -9,12 +9,18 @@ A collection of bash scripts to automate Dokku server setup and Rails applicatio
 
 **Features**:
 - Installs latest Dokku version
-- Configures firewall (UFW) with proper ports
+- **Security hardened SSH configuration** (key-only auth, strong ciphers, rate limiting)
+- **fail2ban intrusion prevention** (auto-bans after failed login attempts)
+- **Automatic security updates** (unattended-upgrades for system patches)
+- Configures Docker DNS for reliable container connectivity
+- **Hardened firewall** (UFW) with Docker container outbound filtering
+- Rate-limited SSH access (6 connections per 30 seconds per IP)
 - Installs essential plugins (PostgreSQL, Redis, Let's Encrypt)
 - Configures global Let's Encrypt email for SSL certificates
 - Sets up SSL certificate auto-renewal
 - Configures global file upload limits
 - Automatically detects and configures IPv4 domain with sslip.io (falls back to IPv6 if needed)
+- Includes fixes for Docker DNS issues (prevents Hetzner VPS connectivity problems)
 
 ### 2. `setup-dokku-app.sh`
 **Purpose**: Creates and configures a new Rails application with database, cache, and AWS backup integration.
@@ -82,14 +88,23 @@ sudo ./setup-dokku-server.sh admin@yourdomain.com
 ```
 
 **What it does**:
-1. Updates system packages
-2. Configures firewall (SSH, HTTP, HTTPS)
-3. Installs Dokku and essential plugins
-4. Configures global Let's Encrypt email for SSL certificates
-5. Sets up SSL certificate auto-renewal
-6. Configures global upload limits (20MB default)
-7. Detects server IP and sets global domain (prioritizes IPv4, falls back to IPv6)
-8. Reboots the server
+1. Configures system locales
+2. **Hardens SSH configuration** (disables password auth, enables key-only, strong crypto)
+3. Updates system packages
+4. Configures Docker DNS with reliable external DNS servers (8.8.8.8, 1.1.1.1)
+5. Configures **security-hardened firewall** with:
+   - Rate-limited SSH (6 conn/30s per IP)
+   - Docker container outbound filtering (whitelist-based)
+   - Logging of blocked container traffic
+6. **Installs fail2ban** (3 failed SSH attempts = 1 hour ban)
+7. **Enables automatic security updates** (unattended-upgrades)
+8. Installs Dokku and essential plugins
+9. Restarts Docker and verifies DNS connectivity
+10. Configures global Let's Encrypt email for SSL certificates
+11. Sets up SSL certificate auto-renewal
+12. Configures global upload limits (20MB default)
+13. Detects server IP and sets global domain (prioritizes IPv4, falls back to IPv6)
+14. Reboots the server
 
 ### Step 2: Application Setup
 
@@ -223,6 +238,74 @@ The scripts automatically configure:
 
 ## Troubleshooting
 
+### Docker Container DNS Issues
+
+If deployments fail with DNS resolution errors (e.g., "cannot resolve github.com"), this indicates Docker containers cannot access external DNS. This issue has been observed on **Hetzner VPS** but not on **Vultr**, suggesting provider-specific firewall configurations.
+
+**Symptoms**:
+- Host can resolve DNS (`ping github.com` works)
+- Docker containers fail DNS lookups (`docker run --rm alpine nslookup github.com` fails)
+- Dokku buildpacks fail to download dependencies
+
+**Root Causes**:
+1. Docker DNS misconfiguration
+2. Firewall blocking forwarded traffic from containers
+3. Strict iptables rules preventing DNS queries
+
+**Prevention** (Already Applied in Scripts):
+The `setup-dokku-server.sh` script now includes these fixes:
+
+1. **Docker DNS Configuration** (`/etc/docker/daemon.json`):
+   ```json
+   {
+       "dns": ["8.8.8.8", "1.1.1.1"]
+   }
+   ```
+
+2. **UFW Forwarding Policy** (`/etc/default/ufw`):
+   ```
+   DEFAULT_FORWARD_POLICY="ACCEPT"
+   ```
+
+3. **DNS Traffic Rules** (in `/etc/ufw/after.rules`):
+   - Allows UDP/TCP port 53 for DNS
+   - Permits all outbound traffic from containers
+   - Uses RETURN instead of DROP for better compatibility
+
+**Manual Verification**:
+```bash
+# Test DNS from within a container
+docker run --rm alpine nslookup github.com
+
+# Check Docker DNS config
+cat /etc/docker/daemon.json
+
+# Verify UFW forwarding policy
+grep DEFAULT_FORWARD_POLICY /etc/default/ufw
+
+# Check iptables rules
+iptables -L DOCKER-USER -n -v
+```
+
+**Manual Fix** (if needed on existing servers):
+```bash
+# 1. Configure Docker DNS
+cat > /etc/docker/daemon.json << 'EOF'
+{
+    "dns": ["8.8.8.8", "1.1.1.1"]
+}
+EOF
+systemctl restart docker
+
+# 2. Enable UFW forwarding
+sed -i 's/DEFAULT_FORWARD_POLICY="DROP"/DEFAULT_FORWARD_POLICY="ACCEPT"/' /etc/default/ufw
+ufw reload
+
+# 3. Add explicit DNS rules (if still needed)
+iptables -I DOCKER-USER -p udp --dport 53 -j ACCEPT
+iptables -I DOCKER-USER -p tcp --dport 53 -j ACCEPT
+```
+
 ### Automatic Domain Configuration
 The scripts prioritize IPv4 for better compatibility:
 - **IPv4 preferred**: Scripts try IPv4 first with `curl -4`
@@ -283,12 +366,118 @@ dokku letsencrypt:list
 dokku nginx:show-config myapp | grep client_max_body_size
 ```
 
-## Security Notes
+## Security Features
+
+### Production-Grade Security Hardening
+
+The `setup-dokku-server.sh` script implements comprehensive security hardening based on industry best practices:
+
+#### 1. SSH Hardening
+- **Key-only authentication**: Password authentication disabled
+- **Strong cryptography**: Modern ciphers and key exchange algorithms only
+  - Ciphers: ChaCha20-Poly1305, AES-256-GCM, AES-128-GCM
+  - Key Exchange: Curve25519, DH-Group16/18-SHA512
+  - MACs: HMAC-SHA2-512/256 with ETM
+- **Connection limits**: Max 3 authentication attempts, 30-second grace period
+- **Idle session timeout**: 5 minutes of inactivity
+- **Disabled unnecessary features**: X11 forwarding, TCP forwarding, agent forwarding
+- **Root login**: Only via SSH keys (no password)
+
+#### 2. Firewall Protection (UFW)
+- **Default deny**: All incoming traffic blocked by default
+- **Rate limiting**: SSH limited to 6 connections per 30 seconds per IP
+- **Minimal ports**: Only 22 (SSH), 80 (HTTP), 443 (HTTPS) open
+- **IPv6 enabled**: Full IPv4 and IPv6 support
+
+#### 3. Docker Container Security
+- **Outbound filtering**: Whitelist-based approach (prevents data exfiltration)
+- **Allowed protocols**: DNS (53), HTTP (80), HTTPS (443), Git (9418), NTP (123)
+- **Blocked by default**: All other outbound connections from containers
+- **Logging**: Blocked container traffic logged with `[UFW DOCKER BLOCK]` prefix
+- **Protection against**: Command & control, data exfiltration, lateral movement
+
+#### 4. Intrusion Prevention (fail2ban)
+- **Auto-banning**: 3 failed SSH attempts = 1 hour ban
+- **Detection window**: 10 minutes
+- **Protection against**: Brute force attacks, credential stuffing
+- **Monitoring**: `/var/log/auth.log` for SSH attacks
+
+#### 5. Automatic Security Updates
+- **unattended-upgrades**: Security patches applied automatically
+- **Update sources**:
+  - Ubuntu security updates
+  - ESM (Extended Security Maintenance) for apps and infrastructure
+- **Maintenance**: Automatic removal of unused kernels and dependencies
+- **No auto-reboot**: Updates applied without automatic reboots (manual control)
+
+#### 6. SSL/TLS
+- **Let's Encrypt**: Free, automatic SSL certificates
+- **Auto-renewal**: Certificates renewed automatically via cron
+- **HTTPS enforcement**: HTTP → HTTPS redirects via Dokku
+
+### Security Monitoring
+
+**Check fail2ban status**:
+```bash
+sudo fail2ban-client status sshd
+```
+
+**View banned IPs**:
+```bash
+sudo fail2ban-client get sshd banned
+```
+
+**Check UFW firewall logs** (blocked Docker traffic):
+```bash
+grep "UFW DOCKER BLOCK" /var/log/syslog
+```
+
+**View automatic update logs**:
+```bash
+cat /var/log/unattended-upgrades/unattended-upgrades.log
+```
+
+**Check SSH configuration**:
+```bash
+sshd -T | grep -E "(passwordauthentication|permitrootlogin|maxauthtries)"
+```
+
+### Security Best Practices
+
+1. **SSH Key Management**:
+   - Use strong SSH keys (ED25519 or RSA 4096-bit)
+   - Keep private keys secure (never share)
+   - Use different keys for different servers
+
+2. **Regular Monitoring**:
+   - Check fail2ban logs weekly: `sudo fail2ban-client status`
+   - Review UFW logs for unusual traffic patterns
+   - Monitor system updates: `cat /var/log/apt/history.log`
+
+3. **Dokku Application Security**:
+   - Use environment variables for secrets (never commit to git)
+   - Enable SSL for all applications: `dokku letsencrypt:enable <app>`
+   - Keep Dokku plugins updated: `dokku plugin:update <plugin>`
+
+4. **Database Security**:
+   - PostgreSQL accessible only from localhost by default
+   - Regular backups to S3 (encrypted in transit)
+   - Use strong database passwords
+
+5. **Additional Hardening** (Optional):
+   - Consider using a non-standard SSH port
+   - Restrict SSH to specific IPs if you have static IPs
+   - Set up 2FA for critical accounts
+   - Enable email notifications for fail2ban
+
+### Security Notes
 
 - Scripts configure UFW firewall with minimal required ports
 - SSL certificates are automatically managed with Let's Encrypt
 - Database backups are encrypted in transit to S3
 - AWS credentials are passed as parameters (not hardcoded)
+- Docker containers run with security constraints (limited outbound access)
+- All security configurations are idempotent and can be re-run safely
 
 ## File Structure
 
