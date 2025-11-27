@@ -347,9 +347,13 @@ if [ -f ~/.ssh/authorized_keys ]; then
     else
         # Add keys if not already present
         echo -e "${BLUE}Adding SSH keys to Dokku...${NC}"
-        cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin
-        echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
-        echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+        if cat ~/.ssh/authorized_keys | dokku ssh-keys:add admin 2>&1 | grep -q "Duplicate"; then
+            echo -e "${GREEN}SSH keys already exist in Dokku (detected via duplicate check)${NC}"
+            echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+        else
+            echo -e "${GREEN}SSH keys added successfully to Dokku!${NC}"
+            echo -e "${CYAN}You can now deploy applications using 'git push dokku main'${NC}"
+        fi
     fi
 else
     echo -e "${YELLOW}Warning: ~/.ssh/authorized_keys not found. You'll need to add SSH keys manually later.${NC}"
@@ -358,18 +362,28 @@ fi
 
 # Configure global domain for multiple applications
 echo -e "${BLUE}Configuring global domain for multiple applications...${NC}"
-SERVER_IP=$(curl -s ifconfig.me || curl -s ipinfo.io/ip || hostname -I | awk '{print $1}')
+
+# Try to get IPv4 address first (preferred for sslip.io compatibility)
+echo -e "${BLUE}Attempting to detect IPv4 address...${NC}"
+SERVER_IP=$(curl -4 -s --connect-timeout 5 ifconfig.me 2>/dev/null || curl -4 -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null)
+
+# If IPv4 detection failed, fall back to IPv6
+if [ -z "$SERVER_IP" ]; then
+    echo -e "${YELLOW}IPv4 not available, falling back to IPv6...${NC}"
+    SERVER_IP=$(curl -6 -s --connect-timeout 5 ifconfig.me 2>/dev/null || curl -6 -s --connect-timeout 5 ipinfo.io/ip 2>/dev/null)
+fi
+
 if [ -n "$SERVER_IP" ]; then
     # Check if the IP is IPv6 (contains colons) and format for sslip.io
     if [[ "$SERVER_IP" == *":"* ]]; then
         # IPv6 address: replace colons with dashes for sslip.io compatibility
         FORMATTED_IP=$(echo "$SERVER_IP" | sed 's/:/-/g')
-        echo -e "${YELLOW}Detected IPv6 address: $SERVER_IP${NC}"
+        echo -e "${YELLOW}Using IPv6 address: $SERVER_IP${NC}"
         echo -e "${BLUE}Formatting for sslip.io: $FORMATTED_IP${NC}"
         SSLIP_DOMAIN="${FORMATTED_IP}.sslip.io"
     else
         # IPv4 address: use as-is
-        echo -e "${YELLOW}Detected IPv4 address: $SERVER_IP${NC}"
+        echo -e "${GREEN}Using IPv4 address: $SERVER_IP${NC}"
         SSLIP_DOMAIN="${SERVER_IP}.sslip.io"
     fi
 
@@ -379,7 +393,8 @@ if [ -n "$SERVER_IP" ]; then
 else
     echo -e "${YELLOW}Could not detect server IP automatically.${NC}"
     echo -e "${YELLOW}Please run manually: dokku domains:set-global <formatted-ip>.sslip.io${NC}"
-    echo -e "${YELLOW}For IPv6, replace colons with dashes (e.g., 2a01-4f8-c013-ae--1.sslip.io)${NC}"
+    echo -e "${YELLOW}For IPv4: dokku domains:set-global <ipv4>.sslip.io${NC}"
+    echo -e "${YELLOW}For IPv6: Replace colons with dashes (e.g., 2a01-4f8-c013-498b--1.sslip.io)${NC}"
 fi
 
 echo -e "${GREEN}Dokku server setup completed successfully!${NC}"
