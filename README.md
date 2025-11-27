@@ -11,19 +11,22 @@ A collection of bash scripts to automate Dokku server setup and Rails applicatio
 - Installs latest Dokku version
 - Configures firewall (UFW) with proper ports
 - Installs essential plugins (PostgreSQL, Redis, Let's Encrypt)
+- Configures global Let's Encrypt email for SSL certificates
 - Sets up SSL certificate auto-renewal
 - Configures global file upload limits
-- Sets up automatic domain configuration
+- Automatically detects and configures IPv4 domain with sslip.io (falls back to IPv6 if needed)
 
 ### 2. `setup-dokku-app.sh`
 **Purpose**: Creates and configures a new Rails application with database, cache, and AWS backup integration.
 
 **Features**:
 - Creates Dokku application
+- Configures app-specific subdomain (e.g., `appname.ipv4.sslip.io`)
 - Sets up PostgreSQL database with automated S3 backups
 - Configures Redis cache
 - Sets Rails production environment variables
 - Scales application processes
+- Attempts to enable Let's Encrypt SSL automatically (or provides instructions)
 
 ### 3. `dokku-configure-upload-limits.sh`
 **Purpose**: Configures nginx upload limits for Dokku applications (global or per-app).
@@ -82,9 +85,11 @@ sudo ./setup-dokku-server.sh admin@yourdomain.com
 1. Updates system packages
 2. Configures firewall (SSH, HTTP, HTTPS)
 3. Installs Dokku and essential plugins
-4. Sets up SSL certificate auto-renewal
-5. Configures global upload limits (20MB default)
-6. Reboots the server
+4. Configures global Let's Encrypt email for SSL certificates
+5. Sets up SSL certificate auto-renewal
+6. Configures global upload limits (20MB default)
+7. Detects server IP and sets global domain (prioritizes IPv4, falls back to IPv6)
+8. Reboots the server
 
 ### Step 2: Application Setup
 
@@ -106,11 +111,13 @@ sudo ./setup-dokku-server.sh admin@yourdomain.com
 
 **What it does**:
 1. Creates the Dokku application
-2. Sets up PostgreSQL database (`<app-name>db`)
-3. Configures automated S3 backups (Sunday & Thursday at midnight)
-4. Sets up Redis cache (`<app-name>red`)
-5. Configures Rails production environment
-6. Scales to 1 web worker and 1 background worker
+2. Configures app domain as `<app-name>.<global-domain>` (e.g., `myapp.1.2.3.4.sslip.io`)
+3. Sets up PostgreSQL database (`<app-name>db`)
+4. Configures automated S3 backups (Sunday & Thursday at midnight)
+5. Sets up Redis cache (`<app-name>red`)
+6. Configures Rails production environment
+7. Scales to 1 web worker and 1 background worker
+8. Attempts to enable Let's Encrypt SSL (provides instructions if app not yet deployed)
 
 ### Step 3: Configure Upload Limits (Optional)
 
@@ -158,12 +165,7 @@ sudo ./dokku-configure-upload-limits.sh myapp 100m
 
 ## Post-Setup Steps
 
-### 1. Complete Dokku Web Setup
-After the server reboots, visit your server's IP address in a web browser to complete the Dokku setup:
-- Add your SSH public key
-- Set the hostname/domain
-
-### 2. Deploy Your Application
+### 1. Deploy Your Application
 ```bash
 # Add Dokku remote to your Rails app
 git remote add dokku dokku@your-server-ip:myapp
@@ -172,12 +174,21 @@ git remote add dokku dokku@your-server-ip:myapp
 git push dokku main
 ```
 
+### 2. Enable SSL (If Not Automatically Enabled)
+If the app wasn't deployed when you ran `setup-dokku-app.sh`, enable SSL after deployment:
+```bash
+# SSH into your server
+dokku letsencrypt:enable myapp
+```
+
+Your app will now be accessible at `https://myapp.YOUR_IP.sslip.io`
+
 ### 3. Set Custom Domain (Optional)
 ```bash
 # SSH into your server
-dokku domains:set myapp yourdomain.com
+dokku domains:add myapp yourdomain.com
 
-# Enable SSL
+# Enable SSL for custom domain
 dokku letsencrypt:enable myapp
 ```
 
@@ -191,8 +202,12 @@ dokku config:set myapp RAILS_MASTER_KEY=your_master_key
 ## Application URLs
 
 After deployment, your applications will be accessible at:
-- **With sslip.io**: `https://myapp.YOUR_SERVER_IP.sslip.io`
-- **With custom domain**: `https://yourdomain.com`
+- **With sslip.io** (automatic): `https://myapp.YOUR_SERVER_IP.sslip.io`
+- **With custom domain** (optional): `https://yourdomain.com`
+
+The scripts automatically configure:
+- IPv4 servers: `myapp.1.2.3.4.sslip.io`
+- IPv6 servers: `myapp.2a01-4f8-c013-498b--1.sslip.io` (colons replaced with dashes)
 
 ## File Upload Limits
 
@@ -208,11 +223,26 @@ After deployment, your applications will be accessible at:
 
 ## Troubleshooting
 
-### IPv6 Server Support
-The scripts automatically detect and handle IPv6 servers (like ARM servers on Hetzner):
-- IPv6 addresses are automatically formatted for sslip.io compatibility
-- Example: `2a01:4f8:c013:ae::1` becomes `2a01-4f8-c013-ae--1.sslip.io`
+### Automatic Domain Configuration
+The scripts prioritize IPv4 for better compatibility:
+- **IPv4 preferred**: Scripts try IPv4 first with `curl -4`
+- **IPv6 fallback**: If IPv4 unavailable, automatically uses IPv6
+- **IPv6 formatting**: Colons replaced with dashes for sslip.io compatibility
+  - Example: `2a01:4f8:c013:ae::1` → `2a01-4f8-c013-ae--1.sslip.io`
 - No manual configuration needed
+
+### SSL Certificate Issues
+If Let's Encrypt fails:
+```bash
+# Check if app is deployed
+dokku ps:report myapp
+
+# Enable SSL manually after deployment
+dokku letsencrypt:enable myapp
+
+# Check SSL status
+dokku letsencrypt:list
+```
 
 ### Common Setup Issues
 
