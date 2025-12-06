@@ -117,8 +117,21 @@ EOF
 
     # Test SSH config and restart if valid
     if sshd -t 2>/dev/null; then
-        systemctl restart sshd
-        echo -e "${GREEN}SSH service restarted with hardened configuration${NC}"
+        # Detect the correct SSH service name (Ubuntu typically uses ssh.service)
+        if systemctl list-unit-files --type=service | grep -q '^ssh.service'; then
+            SSH_SERVICE_NAME="ssh"
+        elif systemctl list-unit-files --type=service | grep -q '^sshd.service'; then
+            SSH_SERVICE_NAME="sshd"
+        else
+            SSH_SERVICE_NAME=""
+        fi
+
+        if [ -n "$SSH_SERVICE_NAME" ]; then
+            systemctl restart "$SSH_SERVICE_NAME"
+            echo -e "${GREEN}SSH service restarted with hardened configuration${NC}"
+        else
+            echo -e "${YELLOW}Warning: Could not determine SSH service name (ssh/sshd); please restart SSH manually${NC}"
+        fi
 
         # Display warning to keep current session open
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -130,7 +143,11 @@ EOF
         echo -e "${CYAN}3. If it works, you're safe to close this session${NC}"
         echo -e "${CYAN}4. If it fails, use this session to revert:${NC}"
         echo -e "${CYAN}   sudo rm /etc/ssh/sshd_config.d/99-hardening.conf${NC}"
-        echo -e "${CYAN}   sudo systemctl restart sshd${NC}"
+        if [ -n "$SSH_SERVICE_NAME" ]; then
+            echo -e "${CYAN}   sudo systemctl restart $SSH_SERVICE_NAME${NC}"
+        else
+            echo -e "${CYAN}   sudo systemctl restart ssh # or sshd${NC}"
+        fi
         echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
         # Wait for user confirmation
