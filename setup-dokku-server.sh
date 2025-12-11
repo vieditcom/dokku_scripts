@@ -409,15 +409,27 @@ cd /tmp
 
 # Install latest version of Dokku
 echo -e "${BLUE}Detecting latest Dokku version...${NC}"
-LATEST_VERSION=$(curl -s https://api.github.com/repos/dokku/dokku/releases/latest | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
 
-if [ -z "$LATEST_VERSION" ]; then
-    echo -e "${YELLOW}Could not detect latest version, falling back to v0.35.20${NC}"
-    LATEST_VERSION="v0.35.20"
+# Try to fetch latest version from GitHub API with timeout
+LATEST_VERSION=$(curl -s --connect-timeout 10 --max-time 30 https://api.github.com/repos/dokku/dokku/releases/latest 2>/dev/null | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+# Verify version format (should start with 'v' and contain numbers)
+if [ -z "$LATEST_VERSION" ] || [[ ! "$LATEST_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo -e "${YELLOW}Could not detect latest version from GitHub API${NC}"
+    echo -e "${YELLOW}Falling back to v0.37.2 (latest stable as of script update)${NC}"
+    LATEST_VERSION="v0.37.2"
+else
+    echo -e "${GREEN}Detected latest Dokku version: $LATEST_VERSION${NC}"
 fi
 
 echo -e "${BLUE}Installing Dokku $LATEST_VERSION...${NC}"
 wget -NP . https://dokku.com/install/$LATEST_VERSION/bootstrap.sh
+
+# Verify bootstrap script was downloaded successfully
+if [ ! -f bootstrap.sh ]; then
+    echo -e "${RED}Error: Failed to download Dokku bootstrap script${NC}"
+    exit 1
+fi
 
 # Make bootstrap script executable and run it
 chmod +x bootstrap.sh
