@@ -37,6 +37,36 @@ print_error() {
 check_dokku_installation() {
     print_status "Checking Dokku installation..."
     
+    # Check if we're on the server (Dokku server has /home/dokku directory)
+    if [ ! -d "/home/dokku" ]; then
+        # We're not on the server, check if this is the Dokku client tool
+        if command -v dokku &> /dev/null; then
+            DOKKU_PATH=$(command -v dokku)
+            
+            # Check if it's the client tool (shell script that requires DOKKU_HOST or git remote)
+            if [ -f "$DOKKU_PATH" ] && (head -n 1 "$DOKKU_PATH" | grep -qE "^(#!/.*bash|#!/.*sh)" || file "$DOKKU_PATH" 2>/dev/null | grep -q "shell script"); then
+                # Try to detect if it's the client by checking for DOKKU_HOST requirement
+                if grep -q "DOKKU_HOST" "$DOKKU_PATH" 2>/dev/null; then
+                    print_error "Detected Dokku CLI client tool (not server installation)"
+                    print_error "This script must be run directly on the Dokku server, not via the CLI client"
+                    print_error ""
+                    print_error "The local 'dokku' command is a client that connects to a remote server."
+                    print_error "This setup script needs to run on the server itself to configure it."
+                    print_error ""
+                    print_error "Please SSH into your Dokku server and run this script there:"
+                    print_error "  ssh root@your-server-ip"
+                    print_error "  ./setup-dokku-app.sh <app-name> <aws-key> <aws-secret> <bucket>"
+                    exit 1
+                fi
+            fi
+        fi
+        
+        print_error "This script must be run on the Dokku server, not locally"
+        print_error "Please SSH into your Dokku server and run this script there"
+        print_error "Example: ssh root@your-server-ip"
+        exit 1
+    fi
+    
     if ! command -v dokku &> /dev/null; then
         print_error "Dokku is not installed or not in PATH"
         print_error "Please install Dokku first: https://dokku.com/docs/getting-started/installation/"
@@ -44,7 +74,14 @@ check_dokku_installation() {
     fi
     
     print_success "Dokku is installed"
-    dokku version
+    
+    # Test that Dokku commands work (this verifies we're using server installation)
+    if dokku apps:list >/dev/null 2>&1; then
+        print_success "Dokku is responding correctly"
+    else
+        print_warning "Dokku command test failed - this may indicate an installation issue"
+        print_warning "Continuing anyway, but some commands may fail"
+    fi
 }
 
 # Function to check if required plugins are installed
